@@ -77,6 +77,17 @@
 // RUN:   -fsanitize=address %s 2>&1 | FileCheck -check-prefixes=ASAN %s
 //     ASAN: ld.lld
 // ASAN-NOT: libclang_rt.asan
+// ASAN-NOT: --wrap=malloc
+
+// RUN: %clang -### --target=amdgpu9.0a-amd-amdhsa -mxnack -nogpulib \
+// RUN:   -resource-dir=%S/Inputs/resource_dir_with_amdgpu_per_target_subdir \
+// RUN:   -fsanitize=address -fsanitize-link-runtime %s 2>&1 \
+// RUN:   | FileCheck -check-prefixes=ASAN-RT %s
+//      ASAN-RT: ld.lld
+// ASAN-RT-SAME: "--whole-archive" "[[RESOURCE_DIR:.+]]{{/|\\\\}}lib{{/|\\\\}}amdgpu-amd-amdhsa{{/|\\\\}}libclang_rt.asan.a" "--no-whole-archive"
+// ASAN-RT-SAME: "--wrap=malloc" "--wrap=free"
+// ASAN-RT-NOT: asan_static
+// ASAN-RT-NOT: asan_cxx
 
 // RUN: %clang -### --target=amdgcn-amd-amdhsa -mcpu=gfx906 -nogpulib \
 // RUN:   -resource-dir=%S/Inputs/resource_dir_with_amdgpu_per_target_subdir \

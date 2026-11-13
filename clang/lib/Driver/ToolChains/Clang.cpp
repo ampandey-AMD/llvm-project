@@ -10039,12 +10039,20 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
     return TC.getVFS().exists(
         TC.getCompilerRT(Args, Name, ToolChain::FT_Static));
   };
+  // OpenMP device ASan comes from compiler-rt, HIP uses the ROCm device library
+  // which is linked at compile time.
+  auto ToolChainHasAsanRT = [&](const ToolChain &TC, Action::OffloadKind Kind) {
+    return Kind == Action::OFK_OpenMP && TC.getTriple().isAMDGPU() &&
+           ToolChainHasRT(TC, "asan");
+  };
   auto ToolChainHasSanitizerRT = [&](const ToolChain &TC, const ArgList &TCArgs,
                                      Action::OffloadKind Kind) {
     const SanitizerArgs &SanArgs = TC.getSanitizerArgs(TCArgs, /*BA=*/{}, Kind);
     if (SanArgs.needsCsanRt())
       return ToolChainHasRT(TC, "csan");
     if (SanArgs.needsDasanRt())
+      return true;
+    if (SanArgs.needsAsanRt() && ToolChainHasAsanRT(TC, Kind))
       return true;
     return ToolChainHasRT(TC, "ubsan_minimal") ||
            ToolChainHasRT(TC, "ubsan_standalone");
@@ -10101,6 +10109,10 @@ void LinkerWrapper::ConstructJob(Compilation &C, const JobAction &JA,
           A->render(Args, LinkerArgs);
         }
       }
+      if (HasSanitizerRT &&
+          TC->getSanitizerArgs(ToolChainArgs, /*BA=*/{}, Kind).needsAsanRt() &&
+          ToolChainHasAsanRT(*TC, Kind))
+        CompilerArgs.emplace_back("-fsanitize-link-runtime");
 
       // If no optimization level was requested we default to `-O0` for no-RDC
       // mode compilations. Others default to `lto<O2>` as standard in ld.lld.

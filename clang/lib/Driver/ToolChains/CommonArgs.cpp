@@ -1792,12 +1792,14 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
 
 static bool hostNeedsOffloadRt(
     Compilation &C, const ToolChain &HostTC,
-    llvm::function_ref<bool(const SanitizerArgs &)> NeedsRuntime) {
+    llvm::function_ref<bool(const ToolChain &, const ArgList &,
+                            const SanitizerArgs &)>
+        NeedsRuntime,
+    ArrayRef<Action::OffloadKind> Kinds = {Action::OFK_Cuda, Action::OFK_OpenMP,
+                                           Action::OFK_HIP, Action::OFK_SYCL}) {
   if (HostTC.getTriple().isGPU())
     return false;
 
-  static constexpr Action::OffloadKind Kinds[] = {
-      Action::OFK_Cuda, Action::OFK_OpenMP, Action::OFK_HIP, Action::OFK_SYCL};
   for (Action::OffloadKind Kind : Kinds) {
     for (const auto &Entry : llvm::make_range(C.getOffloadToolChains(Kind))) {
       const ToolChain *DevTC = Entry.second;
@@ -1810,7 +1812,7 @@ static bool hostNeedsOffloadRt(
            C.getDriver().getOffloadArchs(C, C.getArgs(), Kind, *DevTC)) {
         const ArgList &DevArgs = C.getArgsForToolChain(DevTC, BA, Kind);
         SanitizerArgs DevSan = DevTC->getSanitizerArgs(DevArgs, BA, Kind);
-        if (NeedsRuntime(DevSan))
+        if (NeedsRuntime(*DevTC, DevArgs, DevSan))
           return true;
       }
     }
@@ -1819,19 +1821,40 @@ static bool hostNeedsOffloadRt(
 }
 
 static bool hostNeedsUbsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
-  return hostNeedsOffloadRt(C, HostTC, [](const SanitizerArgs &S) {
-    return S.needsUbsanRt() && !S.requiresMinimalRuntime();
-  });
+  return hostNeedsOffloadRt(
+      C, HostTC,
+      [](const ToolChain &, const ArgList &, const SanitizerArgs &S) {
+        return S.needsUbsanRt() && !S.requiresMinimalRuntime();
+      });
 }
 
 static bool hostNeedsCsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
   return hostNeedsOffloadRt(
-      C, HostTC, [](const SanitizerArgs &S) { return S.needsCsanRt(); });
+      C, HostTC,
+      [](const ToolChain &, const ArgList &, const SanitizerArgs &S) {
+        return S.needsCsanRt();
+      });
+}
+
+// Only OpenMP uses the compiler-rt device runtime, otherwise device ASan
+// reports through the ROCm device library.
+static bool hostNeedsAsanOffloadRt(Compilation &C, const ToolChain &HostTC) {
+  return hostNeedsOffloadRt(
+      C, HostTC,
+      [](const ToolChain &DevTC, const ArgList &DevArgs,
+         const SanitizerArgs &S) {
+        return S.needsAsanRt() && DevTC.getVFS().exists(DevTC.getCompilerRT(
+                                      DevArgs, "asan", ToolChain::FT_Static));
+      },
+      {Action::OFK_OpenMP});
 }
 
 static bool hostNeedsDasanRt(Compilation &C, const ToolChain &HostTC) {
   return hostNeedsOffloadRt(
-      C, HostTC, [](const SanitizerArgs &S) { return S.needsDasanRt(); });
+      C, HostTC,
+      [](const ToolChain &, const ArgList &, const SanitizerArgs &S) {
+        return S.needsDasanRt();
+      });
 }
 
 static void
@@ -1846,6 +1869,10 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   const SanitizerArgs &SanArgs = TC.getSanitizerArgs(Args);
   const bool NeedsUbsanOffloadRt = hostNeedsUbsanOffloadRt(C, TC);
   const bool NeedsCsanOffloadRt = hostNeedsCsanOffloadRt(C, TC);
+  // Device reports are printed by the host ASan runtime, so this requires the
+  // host to be sanitized as well.
+  const bool NeedsAsanOffloadRt =
+      SanArgs.needsAsanRt() && hostNeedsAsanOffloadRt(C, TC);
   const bool NeedsUbsanRt = SanArgs.needsUbsanRt() || NeedsUbsanOffloadRt;
   const bool NeedsCsanRt = SanArgs.needsCsanRt() || NeedsCsanOffloadRt;
   const bool NeedsDasanRt = SanArgs.needsDasanRt() || hostNeedsDasanRt(C, TC);
@@ -1897,7 +1924,7 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
     StaticRuntimes.push_back("stats_client");
 
   // Always link the static runtime regardless of DSO or executable.
-  if (SanArgs.needsAsanRt())
+  if (SanArgs.needsAsanRt() && !TC.getTriple().isGPU())
     HelperStaticRuntimes.push_back("asan_static");
 
   // Offloading images can live in DSOs, the host interceptors must follow. The
@@ -1917,6 +1944,10 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
   if (NeedsDasanRt && !TC.getTriple().isGPU() &&
       !Args.hasArg(options::OPT_shared))
     HelperStaticRuntimes.push_back("dasan-preinit");
+  if (NeedsAsanOffloadRt && !SanArgs.needsSharedRt()) {
+    NonWholeStaticRuntimes.push_back("asan_offload");
+    RequiredSymbols.push_back("__asan_offload_init");
+  }
 
   // Collect static runtimes.
   if (Args.hasArg(options::OPT_shared)) {
@@ -1935,7 +1966,7 @@ collectSanitizerRuntimes(Compilation &C, const ToolChain &TC,
 
   if (!SanArgs.needsSharedRt() && SanArgs.needsAsanRt()) {
     StaticRuntimes.push_back("asan");
-    if (SanArgs.linkCXXRuntimes())
+    if (SanArgs.linkCXXRuntimes() && !TC.getTriple().isGPU())
       StaticRuntimes.push_back("asan_cxx");
   }
 

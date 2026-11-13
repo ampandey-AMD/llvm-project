@@ -1,5 +1,35 @@
 # Build for the AddressSanitizer runtime support library.
 
+# GPU targets only need the device check and report entry points. The host
+# runtime receives the reports through the offload/ interceptors.
+if(COMPILER_RT_GPU_BUILD)
+  include(FindLibcCommonUtils)
+  if(NOT TARGET llvm-libc-common-utilities)
+    add_compiler_rt_component(asan)
+    return()
+  endif()
+
+  include_directories(..)
+
+  set(ASAN_GPU_CFLAGS
+    ${SANITIZER_COMMON_CFLAGS}
+    -DSANITIZER_COMMON_NO_REDEFINE_BUILTINS)
+  append_rtti_flag(OFF ASAN_GPU_CFLAGS)
+
+  add_compiler_rt_component(asan)
+
+  add_compiler_rt_runtime(clang_rt.asan
+    STATIC
+    ARCHS ${ASAN_SUPPORTED_ARCH}
+    SOURCES asan_gpu.cpp
+    ADDITIONAL_HEADERS asan_offload_packet.h
+    CFLAGS ${ASAN_GPU_CFLAGS}
+    LINK_LIBS llvm-libc-common-utilities
+    PARENT_TARGET asan)
+
+  return()
+endif()
+
 set(ASAN_SOURCES
   asan_aix.cpp
   asan_allocator.cpp
@@ -393,14 +423,27 @@ else()
       PARENT_TARGET asan)
   endif()
 
+  # Host side of device reporting. Linked with -u for static runtimes and
+  # embedded directly in the shared runtime.
+  if(OS_NAME MATCHES "Linux" AND NOT ANDROID)
+    add_subdirectory(offload)
+  endif()
+
   # On AIX, we only need the static libraries.
   if (NOT "${CMAKE_SYSTEM_NAME}" MATCHES "AIX")
   foreach(arch ${ASAN_SUPPORTED_ARCH})
+    set(ASAN_OFFLOAD_OBJECT_LIBS)
+    set(ASAN_OFFLOAD_VERSION_LIBS)
+    if(TARGET RTAsan_offload.${arch} AND TARGET RTSanitizerOffload.${arch})
+      set(ASAN_OFFLOAD_OBJECT_LIBS RTAsan_offload RTSanitizerOffload)
+      set(ASAN_OFFLOAD_VERSION_LIBS clang_rt.asan_offload-${arch})
+    endif()
     if (COMPILER_RT_HAS_VERSION_SCRIPT)
       if(WIN32)
         set(SANITIZER_RT_VERSION_LIST_LIBS clang_rt.asan-${arch})
       else()
-        set(SANITIZER_RT_VERSION_LIST_LIBS clang_rt.asan-${arch} clang_rt.asan_cxx-${arch})
+        set(SANITIZER_RT_VERSION_LIST_LIBS clang_rt.asan-${arch} clang_rt.asan_cxx-${arch}
+                                           ${ASAN_OFFLOAD_VERSION_LIBS})
       endif()
       add_sanitizer_rt_version_list(clang_rt.asan-dynamic-${arch}
                                     LIBS ${SANITIZER_RT_VERSION_LIST_LIBS}
@@ -436,6 +479,7 @@ else()
               RTAsan_dynamic_version_script_dummy
               RTUbsan_cxx
               ${ASAN_DYNAMIC_WEAK_INTERCEPTION}
+              ${ASAN_OFFLOAD_OBJECT_LIBS}
       CFLAGS ${ASAN_DYNAMIC_CFLAGS}
       LINK_FLAGS ${ASAN_DYNAMIC_LINK_FLAGS}
                 ${VERSION_SCRIPT_FLAG}

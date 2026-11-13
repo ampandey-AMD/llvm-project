@@ -18,6 +18,10 @@
 #include "asan_internal.h"
 #include "asan_thread.h"
 
+namespace __sanitizer {
+struct SymbolizedStack;
+}  // namespace __sanitizer
+
 namespace __asan {
 
 struct StackVarDescr {
@@ -118,6 +122,10 @@ void ReportNonselfError(uptr *nonself_callstack, u32 n_nonself_callstack,
                         const char *nonself_name, s64 nonself_vma_adjust,
                         int nonself_fd, u64 nonself_file_extent_size,
                         u64 nonself_file_extent_start);
+
+// Symbolizes device PCs for nonself reports that have no code object fd.
+using OffloadSymbolizeFn = SymbolizedStack* (*)(uptr pc);
+void SetOffloadSymbolizer(OffloadSymbolizeFn fn);
 
 // Report a device memory leak or print summary when device_id == -1.
 void ReportNonselfLeak(u64 alloc_pc, u64 alloc_size, int device_id,

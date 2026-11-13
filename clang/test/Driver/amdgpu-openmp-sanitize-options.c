@@ -15,20 +15,24 @@
 // GPU ASan Enabled Test Cases
 
 // GPU ASan enabled for amdgpu-arch [gfx908:xnack+]
-// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm %s 2>&1 \
+// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm -resource-dir=%S/Inputs/resource_dir %s 2>&1 \
 // RUN:   | FileCheck -check-prefixes=HOSTSAN,GPUSAN,SAN %s
 
 // GPU ASan enabled through '-fsanitize=address' flag  without '-fgpu-sanitize' for amdgpu-arch [gfx908:xnack+]
-// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ -fsanitize=address --rocm-path=%S/Inputs/rocm %s 2>&1 \
+// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ -fsanitize=address --rocm-path=%S/Inputs/rocm -resource-dir=%S/Inputs/resource_dir %s 2>&1 \
 // RUN:   | FileCheck -check-prefixes=HOSTSAN,GPUSAN,SAN %s
 
 // GPU ASan enabled for multiple amdgpu-arch [gfx908:xnack+,gfx900:xnack+]
-// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ --offload-arch=gfx900:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm %s 2>&1 \
+// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ --offload-arch=gfx900:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm -resource-dir=%S/Inputs/resource_dir %s 2>&1 \
 // RUN:   | FileCheck -check-prefixes=HOSTSAN,GPUSAN,SAN %s
 
 // GPU ASan enabled  for amdgpu-arch [gfx1250:xnack+,gfx1251:xnack+]
-// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx1250:xnack+,gfx1251:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm %s 2>&1 \
+// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx1250:xnack+,gfx1251:xnack+ -fsanitize=address -fgpu-sanitize --rocm-path=%S/Inputs/rocm -resource-dir=%S/Inputs/resource_dir %s 2>&1 \
 // RUN:   | FileCheck -check-prefixes=HOSTSAN,GPUSAN,SAN %s
+
+// GPU ASan uses the compiler-rt device runtime when it is available.
+// RUN:   %clang -no-canonical-prefixes -### --target=x86_64-unknown-linux-gnu -fopenmp=libomp --offload-arch=gfx908:xnack+ -fsanitize=address --rocm-path=%S/Inputs/rocm -resource-dir=%S/Inputs/resource_dir_with_amdgpu_per_target_subdir %s 2>&1 \
+// RUN:   | FileCheck -check-prefixes=HOSTSAN,RTGPUSAN %s
 
 // GPU ASan Disabled Test Cases
 
@@ -105,6 +109,13 @@
 // HOSTSANCOMBINATION2: {{"[^"]*clang[^"]*" "-cc1" "-triple" "x86_64-unknown-linux-gnu".* "-fopenmp".* "-fsanitize=address,fuzzer,fuzzer-no-link,leak".* "--offload-targets=amdgpu-amd-amdhsa".* "-x" "c".*}}
 
 // GPUSAN: {{"[^"]*clang[^"]*" "-cc1" "-triple" "amdgpu.+-amd-amdhsa" "-aux-triple" "x86_64-unknown-linux-gnu".* "-emit-llvm-bc" "-flto=full" "-flto-unit".* "-mlink-bitcode-file" "[^"]*asanrtl.bc".* "-mlink-builtin-bitcode" "[^"]*ockl.bc".* "-fopenmp".* "-fsanitize=address".* "-x" "c".*}}
+// RTGPUSAN-NOT: asanrtl.bc
+// RTGPUSAN: {{"[^"]*clang[^"]*" "-cc1" "-triple" "amdgpu.+-amd-amdhsa" "-aux-triple" "x86_64-unknown-linux-gnu".* "-fopenmp".* "-fsanitize=address".* "-x" "c".*}}
+// RTGPUSAN-NOT: asanrtl.bc
+// RTGPUSAN: "--device-compiler=amdgpu-amd-amdhsa=-fsanitize=address"
+// RTGPUSAN-SAME: "--device-compiler=amdgpu-amd-amdhsa=-fsanitize-link-runtime"
+// RTGPUSAN-SAME: "-u" "__asan_offload_init"
+// RTGPUSAN-SAME: "{{[^"]*}}libclang_rt.asan_offload{{(-x86_64)?}}.a"
 // NOGPUSAN: {{"[^"]*clang[^"]*" "-cc1" "-triple" "amdgpu.+-amd-amdhsa" "-aux-triple" "x86_64-unknown-linux-gnu".* "-emit-llvm-bc" "-flto=full" "-flto-unit".* "-fopenmp".* "-x" "c".*}}
 
 // SAN: {{"[^"]*llvm-offload-binary[^"]*" "-o".* "--image=file=.*.o,triple=amdgpu.*-amd-amdhsa,arch=(gfx908|gfx1250|gfx1251)(:xnack\-|:xnack\+)?,kind=openmp(,feature=(\-xnack|\+xnack))?"}}

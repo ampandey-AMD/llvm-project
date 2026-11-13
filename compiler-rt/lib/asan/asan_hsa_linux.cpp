@@ -26,6 +26,9 @@
 
 using namespace __asan;
 
+// Provided by the offload/ objects when device reporting is built.
+extern "C" SANITIZER_WEAK_ATTRIBUTE void __asan_offload_hsa_init();
+
 // This TU provides the HSA interceptors, so it must also define the underlying
 // REAL() slots (e.g. __interception::real_hsa_init). Otherwise the shared
 // runtime fails to link when any interceptor references REAL(hsa_*).
@@ -199,7 +202,10 @@ INTERCEPTOR(hsa_status_t, hsa_amd_pointer_info, const void* ptr,
 INTERCEPTOR(hsa_status_t, hsa_init) {
   AsanInitFromRtl();
   ENSURE_HSA_INITED();
-  return asan_hsa_init();
+  hsa_status_t status = asan_hsa_init();
+  if (status == HSA_STATUS_SUCCESS && &__asan_offload_hsa_init)
+    __asan_offload_hsa_init();
+  return status;
 }
 
 static StaticSpinMutex hsa_reals_mu;

@@ -119,8 +119,9 @@ endif()
 function(compiler_rt_test_runtime runtime)
   cmake_parse_arguments(ARG "NO_COMPILER_RT_HAS_GUARD" "" "" ${ARGN})
 
-  # GPU UBSan tests run as part of the host test suite.
-  if(COMPILER_RT_GPU_BUILD AND runtime STREQUAL "ubsan")
+  # GPU UBSan and ASan tests run as part of the host test suite.
+  if(COMPILER_RT_GPU_BUILD AND (runtime STREQUAL "ubsan" OR
+                                runtime STREQUAL "asan"))
     return()
   endif()
 

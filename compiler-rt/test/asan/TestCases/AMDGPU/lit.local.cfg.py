@@ -157,6 +157,29 @@ else:
             else:
                 config.environment["ASAN_OPTIONS"] = "detect_leaks=0"
             append_detect_leaks_off_asan_subst(config.substitutions)
+            # OpenMP offloading uses the compiler-rt device runtime, which
+            # accesses host shadow memory and therefore needs XNACK.
+            gpu_arch = walk_config_attr(config, "gpu_arch")
+            gpu_runtimes = walk_config_attr(config, "gpu_runtimes") or []
+            if (
+                gpu_arch
+                and "asan" in gpu_runtimes
+                and "openmp-offload" in root.available_features
+            ):
+                if "xnack" not in gpu_arch:
+                    gpu_arch += ":xnack+"
+                config.available_features.add("asan-openmp-offload")
+                omp_flags = shlex.split(walk_config_attr(config, "clang")) + [
+                    "-fopenmp",
+                    "--offload-arch=" + gpu_arch,
+                    "-g",
+                    "-frtlib-add-rpath",
+                    "-fsanitize=address",
+                    "-shared-libasan",
+                ]
+                config.substitutions.append(
+                    ("%clang_omp_offload_asan ", " ".join(omp_flags) + " ")
+                )
             rocm_lib = rocm_lib_dir(rocm_root)
             rocm_include = os.path.join(rocm_root, "include")
             config.substitutions.append(("%rocm_root", rocm_root))
