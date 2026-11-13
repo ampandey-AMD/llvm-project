@@ -13,6 +13,9 @@
 
 #include "PluginInterface.h"
 
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/MathExtras.h"
+
 #include "shared/rpc.h"
 #include "shared/rpc_opcodes.h"
 #include "shared/rpc_server.h"
@@ -21,6 +24,56 @@ using namespace llvm;
 using namespace omp;
 using namespace target;
 
+// The GPU libc allocator locates slabs by masking pointers, so every
+// allocation of at least this size must be aligned to it.
+static constexpr uint64_t LibcSlabAlignment = 2ull * 1024 * 1024;
+
+// Aligned pointers handed to libc mapped to the underlying allocation.
+static std::mutex LibcAllocsMutex;
+static DenseMap<void *, void *> LibcAllocs;
+
+static void *libcAllocate(plugin::GenericDeviceTy &Device, uint64_t Size) {
+  auto Allocate = [&](uint64_t Size) -> void * {
+    auto PtrOrErr = Device.allocate(Size, OL_ALLOC_TYPE_DEVICE);
+    if (!PtrOrErr) {
+      consumeError(PtrOrErr.takeError());
+      return nullptr;
+    }
+    return *PtrOrErr;
+  };
+
+  void *Ptr = Allocate(Size);
+  if (!Ptr || Size < LibcSlabAlignment ||
+      isAddrAligned(Align(LibcSlabAlignment), Ptr))
+    return Ptr;
+
+  // ROCr aligns large allocations, but interposed allocators such as the
+  // AddressSanitizer runtime only guarantee page alignment.
+  if (auto Err = Device.free(Ptr, OL_ALLOC_TYPE_DEVICE))
+    consumeError(std::move(Err));
+  void *Base = Allocate(Size + LibcSlabAlignment);
+  if (!Base)
+    return nullptr;
+  void *Aligned = reinterpret_cast<void *>(
+      alignTo(reinterpret_cast<uintptr_t>(Base), LibcSlabAlignment));
+  std::lock_guard<std::mutex> Lock(LibcAllocsMutex);
+  LibcAllocs[Aligned] = Base;
+  return Aligned;
+}
+
+static void libcFree(plugin::GenericDeviceTy &Device, void *Ptr) {
+  {
+    std::lock_guard<std::mutex> Lock(LibcAllocsMutex);
+    auto It = LibcAllocs.find(Ptr);
+    if (It != LibcAllocs.end()) {
+      Ptr = It->second;
+      LibcAllocs.erase(It);
+    }
+  }
+  if (auto Err = Device.free(Ptr, OL_ALLOC_TYPE_DEVICE))
+    consumeError(std::move(Err));
+}
+
 template <uint32_t NumLanes>
 rpc::RPCStatus handleOffloadOpcodes(plugin::GenericDeviceTy &Device,
                                     rpc::Server::Port &Port) {
@@ -28,21 +81,14 @@ rpc::RPCStatus handleOffloadOpcodes(plugin::GenericDeviceTy &Device,
   switch (Port.get_opcode()) {
   case LIBC_MALLOC: {
     Port.recv_and_send([&](rpc::Buffer *Buffer, uint32_t) {
-      auto PtrOrErr = Device.allocate(Buffer->data[0], OL_ALLOC_TYPE_DEVICE);
-      void *Ptr = nullptr;
-      if (!PtrOrErr)
-        llvm::consumeError(PtrOrErr.takeError());
-      else
-        Ptr = *PtrOrErr;
-      Buffer->data[0] = reinterpret_cast<uintptr_t>(Ptr);
+      Buffer->data[0] =
+          reinterpret_cast<uintptr_t>(libcAllocate(Device, Buffer->data[0]));
     });
     break;
   }
   case LIBC_FREE: {
     Port.recv([&](rpc::Buffer *Buffer, uint32_t) {
-      if (auto Err = Device.free(reinterpret_cast<void *>(Buffer->data[0]),
-                                 OL_ALLOC_TYPE_DEVICE))
-        llvm::consumeError(std::move(Err));
+      libcFree(Device, reinterpret_cast<void *>(Buffer->data[0]));
     });
     break;
   }

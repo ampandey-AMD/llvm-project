@@ -20,6 +20,8 @@
 #include "asan_stack.h"
 #include "sanitizer_common/sanitizer_file.h"
 #include "sanitizer_common/sanitizer_stackdepot.h"
+#include "sanitizer_common/sanitizer_stacktrace_printer.h"
+#include "sanitizer_common/sanitizer_symbolizer.h"
 #include "sanitizer_common/sanitizer_symbolizer_amdhsa.h"
 
 namespace __asan {
@@ -788,7 +790,33 @@ ErrorNonSelfAMDGPU::ErrorNonSelfAMDGPU(uptr *dev_callstack, u32 n_callstack,
   }
 }
 
+static OffloadSymbolizeFn offload_symbolize;
+
+void SetOffloadSymbolizer(OffloadSymbolizeFn fn) { offload_symbolize = fn; }
+
+// Reports delivered over offload RPC carry no code object file descriptor;
+// the offload layer maps the device PC to its loaded image instead.
+static bool PrintOffloadStack(uptr pc) {
+  if (!offload_symbolize)
+    return false;
+  SymbolizedStack* frames = offload_symbolize(pc);
+  if (!frames)
+    return false;
+  int n = 0;
+  for (SymbolizedStack* f = frames; f; f = f->next, ++n) {
+    InternalScopedString res;
+    StackTracePrinter::GetOrInit()->RenderFrame(
+        &res, common_flags()->stack_trace_format, n, f->info.address, &f->info,
+        common_flags()->symbolize_vs_style, common_flags()->strip_path_prefix);
+    Printf("%s\n", res.data());
+  }
+  frames->ClearAll();
+  return true;
+}
+
 void ErrorNonSelfAMDGPU::PrintStack() {
+  if (cb_loc.fd < 0 && PrintOffloadStack(callstack[0]))
+    return;
   InternalScopedString source_location;
   source_location.AppendF("  #0 %p", (void *)callstack[0]);
 #if SANITIZER_AMDHSA
@@ -822,7 +850,8 @@ void ErrorNonSelfAMDGPU::PrintThreadsAndAddresses() {
 
 static uptr ScanForMagicDown(uptr start, uptr lo, uptr magic0, uptr magic1) {
   for (uptr p = start; p >= lo; p -= sizeof(uptr)) {
-    if (((uptr*)p)[0] == magic0 && ((uptr*)p)[1] == magic1)
+    if (((uptr*)p)[0] == magic0 &&
+        (((uptr*)p)[1] == magic1 || ((uptr*)p)[1] == p))
       return p;
   }
   return 0;
@@ -830,7 +859,8 @@ static uptr ScanForMagicDown(uptr start, uptr lo, uptr magic0, uptr magic1) {
 
 static uptr ScanForMagicUp(uptr start, uptr hi, uptr magic0, uptr magic1) {
   for (uptr p = start; p < hi; p += sizeof(uptr)) {
-    if (((uptr*)p)[0] == magic0 && ((uptr*)p)[1] == magic1)
+    if (((uptr*)p)[0] == magic0 &&
+        (((uptr*)p)[1] == magic1 || ((uptr*)p)[1] == p))
       return p;
   }
   return 0;

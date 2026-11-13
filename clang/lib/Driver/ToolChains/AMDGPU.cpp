@@ -655,9 +655,19 @@ void amdgpu::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   addLinkerCompressDebugSectionsOption(getToolChain(), Args, CmdArgs);
   getToolChain().AddFilePathLibArgs(Args, CmdArgs);
   Args.AddAllArgs(CmdArgs, options::OPT_L);
-  // FIXME: Device ASan is provided by the ROCm device library, not compiler-rt.
-  if (!getToolChain().getSanitizerArgs(Args).needsAsanRt())
+  // Device ASan is provided by the ROCm device library at compile time unless
+  // the compiler-rt runtime is requested, as OpenMP offloading does.
+  bool NeedsAsan = getToolChain().getSanitizerArgs(Args).needsAsanRt();
+  if (!NeedsAsan ||
+      Args.hasFlag(options::OPT_fsanitize_link_runtime,
+                   options::OPT_fno_sanitize_link_runtime, false)) {
     addSanitizerRuntimes(getToolChain(), Args, CmdArgs, C);
+    // The runtime routes device heap allocations through its own allocator.
+    if (NeedsAsan &&
+        getToolChain().getVFS().exists(
+            getToolChain().getCompilerRT(Args, "asan", ToolChain::FT_Static)))
+      CmdArgs.append({"--wrap=malloc", "--wrap=free"});
+  }
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
 
   // Always pass the target-id features to the LTO job.
@@ -1209,10 +1219,17 @@ AMDGPUToolChain::getCommonDeviceLibNames(
                                                 ABIVer))
     return {};
 
-  return RocmInstallation->getCommonBitcodeLibs(
-      DriverArgs, LibDeviceFile, GPUArch, DeviceOffloadingKind,
+  // OpenMP links device ASan from compiler-rt when it is available, the device
+  // library copy would conflict with it.
+  bool NeedsDeviceLibAsan =
       getSanitizerArgs(DriverArgs, BoundArch(TargetID), DeviceOffloadingKind)
-          .needsAsanRt());
+          .needsAsanRt() &&
+      !(DeviceOffloadingKind == Action::OFK_OpenMP &&
+        getVFS().exists(
+            getCompilerRT(DriverArgs, "asan", ToolChain::FT_Static)));
+  return RocmInstallation->getCommonBitcodeLibs(DriverArgs, LibDeviceFile,
+                                                GPUArch, DeviceOffloadingKind,
+                                                NeedsDeviceLibAsan);
 }
 
 llvm::SmallVector<ToolChain::BitCodeLibraryInfo, 12>

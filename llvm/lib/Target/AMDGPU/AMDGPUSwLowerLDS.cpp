@@ -1034,6 +1034,7 @@ void AMDGPUSwLowerLDS::lowerKernelLDSAccesses(Function *Func,
 
   // Free Block
   IRB.SetInsertPoint(FreeBlock->begin());
+  IRB.SetCurrentDebugLocation(FirstDL);
 
   // Free the previously allocate device global memory.
   FunctionCallee AsanFreeFunc = M.getOrInsertFunction(
@@ -1399,6 +1400,12 @@ bool AMDGPUSwLowerLDS::run() {
     }
     for (auto &Operand : OperandsToInstrument) {
       Value *Addr = Operand.getPtr();
+      Instruction *Insn = Operand.getInsn();
+      // The report call inherits this location, and calls into a runtime with
+      // debug info must have one.
+      if (!Insn->getDebugLoc())
+        Insn->setDebugLoc(
+            getOrCreateDebugLoc(Insn, Insn->getFunction()->getSubprogram()));
       instrumentAddress(M, IRB, Operand.getInsn(), Operand.getInsn(), Addr,
                         Operand.Alignment.valueOrOne(), Operand.TypeStoreSize,
                         Operand.IsWrite, nullptr, false, false, AsanInfo.Scale,
