@@ -1345,8 +1345,6 @@ bool AMDGPUSwLowerLDS::run() {
   // Get non-kernels with LDS instructions and the kernels reaching them.
   getNonKernelsWithLDSInstructions(CG);
 
-  // TODO: removeFnAttrFromReachable does not visit callees of indirect call
-  // targets.
   for (Function *Func : FuncLDSAccessInfo.KernelsWithIndirectLDSAccess)
     removeFnAttrFromReachable(CG, Func, {"amdgpu-no-lds-kernel-id"});
 
