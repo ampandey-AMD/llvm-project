@@ -352,7 +352,7 @@ void removeFnAttrFromReachable(CallGraph &CG, Function *KernelRoot,
           SeenUnknownCall = true;
 
           // If we see any indirect calls, assume nothing about potential
-          // targets.
+          // targets. Their callees are reachable too, so visit them as well.
           // TODO: This could be refined to possible LDS global users.
           for (auto &ExternalCallRecord : *CG.getExternalCallingNode()) {
             Function *PotentialCallee =
@@ -361,6 +361,8 @@ void removeFnAttrFromReachable(CallGraph &CG, Function *KernelRoot,
             if (!isKernel(*PotentialCallee)) {
               for (StringRef Attr : FnAttrs)
                 PotentialCallee->removeFnAttr(Attr);
+              if (Visited.insert(PotentialCallee).second)
+                WorkList.push_back(PotentialCallee);
             }
           }
         }

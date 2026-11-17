@@ -83,6 +83,15 @@ private:
     return &Data[computeThreadStorageTotal() * TId + Usage[TId]];
   }
 
+  /// Whether \p Ptr came from this stack rather than the global fallback. This
+  /// cannot test for a shared memory address: the address sanitizer moves the
+  /// stack out of shared memory.
+  bool owns(void *Ptr) {
+    uintptr_t Addr = reinterpret_cast<uintptr_t>(Ptr);
+    uintptr_t Begin = reinterpret_cast<uintptr_t>(static_cast<void *>(Data));
+    return Addr >= Begin && Addr < Begin + sizeof(Data);
+  }
+
   /// The actual storage, shared among all warps.
   [[gnu::aligned(
       allocator::ALIGNMENT)]] unsigned char Data[state::SharedScratchpadSize];
@@ -134,7 +143,7 @@ void *SharedMemorySmartStackTy::push(uint64_t Bytes) {
 
 void SharedMemorySmartStackTy::pop(void *Ptr, uint64_t Bytes) {
   uint64_t AlignedBytes = __builtin_align_up(Bytes, allocator::ALIGNMENT);
-  if (utils::isSharedMemPtr(Ptr)) {
+  if (owns(Ptr)) {
     int TId = mapping::getThreadIdInBlock();
     Usage[TId] -= AlignedBytes;
     return;
