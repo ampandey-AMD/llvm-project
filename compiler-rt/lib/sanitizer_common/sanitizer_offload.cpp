@@ -9,6 +9,7 @@
 #include "sanitizer_offload.h"
 
 #include <dlfcn.h>
+#include <link.h>
 
 #include "sanitizer_common.h"
 #include "sanitizer_libc.h"
@@ -109,6 +110,24 @@ struct AmdAqlPm4Ib {
 static_assert(sizeof(AmdAqlPm4Ib) == 64, "vendor PM4 packet");
 static_assert(offsetof(AmdAqlPm4Ib, Completion) == 56, "vendor PM4 packet");
 
+int FindLoadedHsa(struct dl_phdr_info* Info, size_t, void* Arg) {
+  if (!Info->dlpi_name ||
+      !internal_strstr(Info->dlpi_name, SANITIZER_HSA_LIBRARY))
+    return 0;
+  internal_strncpy(static_cast<char*>(Arg), Info->dlpi_name,
+                   kMaxPathLength - 1);
+  return 1;
+}
+
+// ROCr loaded into an RTLD_LOCAL group (e.g. by a dlopen'ed HIP library) is
+// invisible to RTLD_NEXT. Find the loaded copy instead; never load a new one.
+void* LoadedHsaHandle() {
+  char Path[kMaxPathLength] = {};
+  if (!dl_iterate_phdr(FindLoadedHsa, Path))
+    return nullptr;
+  return dlopen(Path, RTLD_LAZY | RTLD_NOLOAD);
+}
+
 }  // namespace
 
 Offload Offload::Ctx;
@@ -139,13 +158,22 @@ void Offload::ForEachAgentObject(hsa_executable_t Exec, Cb F) {
 
 // Fetch all the real HSA library calls we need.
 bool Offload::Resolve() {
-#define SANITIZER_HSA_RESOLVE(Name)                                        \
-  Api.Name = reinterpret_cast<decltype(&::Name)>(dlsym(RTLD_NEXT, #Name)); \
-  if (!Api.Name)                                                           \
+  auto ResolveFrom = [this](void* Handle) {
+#define SANITIZER_HSA_RESOLVE(Name)                                     \
+  Api.Name = reinterpret_cast<decltype(&::Name)>(dlsym(Handle, #Name)); \
+  if (!Api.Name)                                                        \
     return false;
-  SANITIZER_HSA_FUNCTIONS(SANITIZER_HSA_RESOLVE)
+    SANITIZER_HSA_FUNCTIONS(SANITIZER_HSA_RESOLVE)
 #undef SANITIZER_HSA_RESOLVE
-  return true;
+    return true;
+  };
+  if (ResolveFrom(RTLD_NEXT))
+    return true;
+  void* Handle = LoadedHsaHandle();
+  if (!Handle)
+    return false;
+  VReport(1, "%s: resolving HSA from the loaded runtime\n", SanitizerToolName);
+  return ResolveFrom(Handle);
 }
 
 // Iterate the topology to discover agents. If this fails the interceptors are
