@@ -50,8 +50,6 @@ static StaticSpinMutex hsa_runtime_handle_mu;
 // Mutex to protect hsa_amd symbol loading
 static StaticSpinMutex hsa_runtime_init_mu;
 
-// Default ROCr library soname
-static const char kDefaultHsaRuntimePath[] = "libhsa-runtime64.so.1";
 static const char kHsaRuntimeName[] = "libhsa-runtime64";
 
 // HSA_EXT_POINTER_TYPE_SVM: a reservation registered with
@@ -122,7 +120,9 @@ static int FindLoadedHsaRuntime(struct dl_phdr_info* info, size_t, void* arg) {
 // may live in an RTLD_LOCAL group (e.g. a HIP library dlopen'ed by Python)
 // found via another object's RUNPATH, which neither RTLD_NEXT nor a name-based
 // dlopen from this runtime can see. dlsym() on this handle returns ROCr's own
-// definitions, never the sanitizer interceptors.
+// definitions, never the sanitizer interceptors. A ROCr is never loaded here:
+// the interceptors are exported to every program, including ones that do not
+// use HSA.
 void* GetHsaRuntimeHandle() {
   SpinMutexLock l(&hsa_runtime_handle_mu);
   if (hsa_runtime_handle)
@@ -138,17 +138,6 @@ void* GetHsaRuntimeHandle() {
       hsa_runtime_handle = dlopen(loaded_path, RTLD_LAZY | RTLD_NOLOAD);
       VReport(2, "AmdHsa: loaded ROCr %s, handle %p\n", loaded_path,
               hsa_runtime_handle);
-    }
-  }
-
-  if (!hsa_runtime_handle) {
-    if (!path || !path[0])
-      path = kDefaultHsaRuntimePath;
-    hsa_runtime_handle = dlopen(path, RTLD_NOW);
-    if (!hsa_runtime_handle) {
-      const char* err = dlerror();
-      VReport(2, "AmdHsa: dlopen(%s) failed: %s\n", path,
-              err ? err : "unknown error");
     }
   }
   return hsa_runtime_handle;

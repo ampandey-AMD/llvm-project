@@ -321,9 +321,9 @@ hsa_status_t asan_hsa_amd_pointer_info(const void* ptr,
 
 hsa_status_t asan_hsa_init() {
   if (UNLIKELY(!REAL(hsa_init))) {
-    Report(
-        "ERROR: AddressSanitizer: could not resolve the ROCr hsa_init; set "
-        "SANITIZER_HSA_RUNTIME_PATH to libhsa-runtime64.so.1\n");
+    VReport(1,
+            "AddressSanitizer: could not resolve hsa_init from a loaded ROCr "
+            "(libhsa-runtime64)\n");
     return HSA_STATUS_ERROR_NOT_INITIALIZED;
   }
   hsa_status_t status = REAL(hsa_init)();

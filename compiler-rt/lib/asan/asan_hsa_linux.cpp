@@ -67,34 +67,38 @@ namespace __asan {
 // once that INTERCEPTOR has been seen.
 static void ENSURE_HSA_INITED();
 
+// The runtime exports these interceptors to every program, so act as if HSA is
+// absent when no loaded ROCr provides `real`.
+#  define ASAN_HSA_ENTER(real) \
+    AsanInitFromRtl();         \
+    ENSURE_HSA_INITED();       \
+    if (UNLIKELY(!REAL(real))) \
+    return HSA_STATUS_ERROR_NOT_INITIALIZED
+
 INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_allocate,
             hsa_amd_memory_pool_t memory_pool, size_t size, uint32_t flags,
             void** ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_memory_pool_allocate);
   GET_STACK_TRACE_MALLOC;
   return asan_hsa_amd_memory_pool_allocate(memory_pool, size, flags, ptr,
                                            &stack);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_memory_pool_free, void* ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_memory_pool_free);
   GET_STACK_TRACE_FREE;
   return asan_hsa_amd_memory_pool_free(ptr, &stack);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_memory_free, void* ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_memory_pool_free);
   GET_STACK_TRACE_FREE;
   return asan_hsa_amd_memory_pool_free(ptr, &stack);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_agents_allow_access, uint32_t num_agents,
             const hsa_agent_t* agents, const uint32_t* flags, const void* ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_agents_allow_access);
   GET_STACK_TRACE_FREE;
   return asan_hsa_amd_agents_allow_access(num_agents, agents, flags, ptr,
                                           &stack);
@@ -102,8 +106,7 @@ INTERCEPTOR(hsa_status_t, hsa_amd_agents_allow_access, uint32_t num_agents,
 
 INTERCEPTOR(hsa_status_t, hsa_memory_copy, void* dst, const void* src,
             size_t size) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_memory_copy);
   if (flags()->replace_intrin) {
     if (dst != src) {
       CHECK_RANGES_OVERLAP("hsa_memory_copy", dst, size, src, size);
@@ -118,8 +121,7 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_async_copy, void* dst,
             hsa_agent_t dst_agent, const void* src, hsa_agent_t src_agent,
             size_t size, uint32_t num_dep_signals,
             const hsa_signal_t* dep_signals, hsa_signal_t completion_signal) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_memory_async_copy);
   if (flags()->replace_intrin) {
     if (dst != src) {
       CHECK_RANGES_OVERLAP("hsa_amd_memory_async_copy", dst, size, src, size);
@@ -137,8 +139,7 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_async_copy_on_engine, void* dst,
             size_t size, uint32_t num_dep_signals,
             const hsa_signal_t* dep_signals, hsa_signal_t completion_signal,
             hsa_amd_sdma_engine_id_t engine_id, bool force_copy_on_sdma) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_memory_async_copy_on_engine);
   if (flags()->replace_intrin) {
     if (dst != src) {
       CHECK_RANGES_OVERLAP("hsa_amd_memory_async_copy_on_engine", dst, size,
@@ -154,38 +155,33 @@ INTERCEPTOR(hsa_status_t, hsa_amd_memory_async_copy_on_engine, void* dst,
 
 INTERCEPTOR(hsa_status_t, hsa_amd_ipc_memory_create, void* ptr, size_t len,
             hsa_amd_ipc_memory_t* handle) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_ipc_memory_create);
   return asan_hsa_amd_ipc_memory_create(ptr, len, handle);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_ipc_memory_attach,
             const hsa_amd_ipc_memory_t* handle, size_t len, uint32_t num_agents,
             const hsa_agent_t* mapping_agents, void** mapped_ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_ipc_memory_attach);
   return asan_hsa_amd_ipc_memory_attach(handle, len, num_agents, mapping_agents,
                                         mapped_ptr);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_ipc_memory_detach, void* mapped_ptr) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_ipc_memory_detach);
   return asan_hsa_amd_ipc_memory_detach(mapped_ptr);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_vmem_address_reserve_align, void** ptr,
             size_t size, uint64_t address, uint64_t alignment, uint64_t flags) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_vmem_address_reserve_align);
   GET_STACK_TRACE_MALLOC;
   return asan_hsa_amd_vmem_address_reserve_align(ptr, size, address, alignment,
                                                  flags, &stack);
 }
 
 INTERCEPTOR(hsa_status_t, hsa_amd_vmem_address_free, void* ptr, size_t size) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_vmem_address_free);
   GET_STACK_TRACE_FREE;
   return asan_hsa_amd_vmem_address_free(ptr, size, &stack);
 }
@@ -193,8 +189,7 @@ INTERCEPTOR(hsa_status_t, hsa_amd_vmem_address_free, void* ptr, size_t size) {
 INTERCEPTOR(hsa_status_t, hsa_amd_pointer_info, const void* ptr,
             hsa_amd_pointer_info_t* info, void* (*alloc)(size_t),
             uint32_t* num_agents_accessible, hsa_agent_t** accessible) {
-  AsanInitFromRtl();
-  ENSURE_HSA_INITED();
+  ASAN_HSA_ENTER(hsa_amd_pointer_info);
   return asan_hsa_amd_pointer_info(ptr, info, alloc, num_agents_accessible,
                                    accessible);
 }
