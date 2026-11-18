@@ -815,7 +815,10 @@ static bool PrintOffloadStack(uptr pc) {
 }
 
 void ErrorNonSelfAMDGPU::PrintStack() {
-  if (cb_loc.fd < 0 && PrintOffloadStack(callstack[0]))
+  // Only fall back to the offload symbolizer when no code object was supplied
+  // at all (RPC reports). A HIP in-memory code object arrives with fd == -1 but
+  // a non-zero size and host pointer, and must go through comgr below.
+  if (cb_loc.fd < 0 && cb_loc.size == 0 && PrintOffloadStack(callstack[0]))
     return;
   InternalScopedString source_location;
   source_location.AppendF("  #0 %p", (void *)callstack[0]);
